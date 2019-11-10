@@ -1,0 +1,298 @@
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Data;
+using System.Drawing;
+using System.Linq;
+using System.Text;
+using System.Windows.Forms;
+using System.Threading;
+using System.Runtime.InteropServices;
+using System.IO;
+
+namespace PeopleCardInfoRed
+{   
+public partial class Form2 : Form   
+  {        
+    public Form2()      
+    {            
+      InitializeComponent();        
+    }         
+    
+    private void Form2_Load(object sender, EventArgs e)       
+    {            
+      //lblName.Text = DateTime.Now.Ticks.ToString();            
+      InitControl();            
+      InitThread();           
+      ReadCard();        
+    }        
+    
+    int ReadFalseCount = 0;         
+    
+    /// <summary>        
+    /// 读卡方法        
+    /// </summary>        
+    void ReadCard()       
+    {          
+      if (IsScanning)           
+      {                
+        return;           
+      }           
+      Thread ThreadReadCard = new Thread(new ThreadStart(delegate           
+      {                
+        IsScanning = true;                
+        while (IsScanning)                
+        {                    
+          Thread.Sleep(500);                   
+          int iPort = Project.DevicePort;                    
+          if (Project.IsOpenedPort)                    
+          {                        
+            IsReading = true;                        
+            IntPtr tmp = Marshal.AllocCoTaskMem(4);                       
+            int FindIDCard = API.SDT_StartFindIDCard(iPort, tmp, 0);                        
+            if (FindIDCard == 0x9f)                        
+            {                           
+              IntPtr tmp1 = Marshal.AllocCoTaskMem(8);                            
+              int SelectIDCard = API.SDT_SelectIDCard(iPort, tmp1, 0);                       
+            }                        
+            IntPtr ptr_txt = Marshal.AllocCoTaskMem(256);                       
+            IntPtr ptr_txtlen = Marshal.AllocCoTaskMem(4);                      
+            IntPtr ptr_pic = Marshal.AllocCoTaskMem(1024);                      
+            IntPtr ptr_piclen = Marshal.AllocCoTaskMem(4);                      
+            if (API.SDT_ReadBaseMsg(iPort, ptr_txt, ptr_txtlen, ptr_pic, ptr_piclen, 0) == 0x90)                       
+              {                           
+                ReadFalseCount = 0;                          
+                int txtLen = Marshal.ReadInt32(ptr_txtlen);                         
+                byte[] txt = new byte[txtLen];                            
+                for (int i = 0; i < txtLen; i++)                           
+                  {                               
+                  txt[i] = Marshal.ReadByte(ptr_txt, i);                           
+                  }                           
+                  //文本解析                            
+                  string Name = string.Empty;                           
+                  string Sex = string.Empty;                           
+                  string Mz = string.Empty;                            
+                  string Birthday = string.Empty;                      
+                  string Address = string.Empty;                       
+                  string IDNum = string.Empty;                         
+                  string Fzjg = string.Empty;                          
+                  string Yxq = string.Empty;                           
+                  string AppendMsg = string.Empty;                     
+                  string NewAddress = string.Empty;                    
+                  {                                
+                    Name = System.Text.Encoding.Unicode.GetString(txt, 0x00, 30).Trim();
+                    //姓名                               
+                    Sex = System.Text.Encoding.Unicode.GetString(txt, 0x1E, 2).Trim();
+                    //性别                                
+                    IDNum = System.Text.Encoding.Unicode.GetString(txt, 0x7A, 36).Trim();
+                    //身份证号                              
+                    IntPtr ptr_newappendmsg = Marshal.AllocCoTaskMem(70);                                
+                    IntPtr ptr_newappendmsglen = Marshal.AllocCoTaskMem(4);                              
+                    if (API.SDT_ReadNewAppMsg(iPort, ptr_newappendmsg, ptr_newappendmsglen, 0) == 0x90)           
+                    {                                   
+                    int NewAppendMsgLen = Marshal.ReadInt32(ptr_newappendmsglen);                                  
+                    byte[] NewAppendMsg = new byte[NewAppendMsgLen];                                  
+                    for (int i = 0; i < NewAppendMsgLen; i++)                                   
+                    {                                       
+                    NewAppendMsg[i] = Marshal.ReadByte(ptr_newappendmsg, i);                              
+                    }                                   
+                    NewAddress = System.Text.Encoding.Unicode.GetString(NewAppendMsg);                            
+                    }                               
+                    if (FindIDCard != 0x9f)                    
+                    {                            
+                    if (!lblIDCardNum.Text.Equals(string.Empty))                        
+                    {                                       
+                    Thread.Sleep(500);                                
+                    continue;                                  
+                    }                               
+                    }                          
+                    }                           
+                    Image img = null;                            
+                    //照片解析                            
+                    {                               
+                    int picLen = Marshal.ReadInt32(ptr_piclen);             
+                    byte[] pic = new byte[picLen];                          
+                    for (int i = 0; i < picLen; i++)                        
+                    {                                    
+                    pic[i] = Marshal.ReadByte(ptr_pic, i);              
+                    }                               
+                    string zpPath = Application.StartupPath + "\\" + IDNum;            
+                    FileStream fs = new FileStream(zpPath + ".wlt", FileMode.Create);       
+                    fs.Write(pic, 0, pic.Length);                              
+                    fs.Close();                           
+                    int zpResult = API.GetBmp(zpPath + ".wlt", 1);          
+                    if (zpResult == 1)                              
+                    {                                  
+                    FileStream zpfs = new FileStream(zpPath + ".bmp", FileMode.Open);         
+                    byte[] zp = new byte[zpfs.Length];                                 
+                    zpfs.Read(zp, 0, (int)zpfs.Length);                                
+                    zpfs.Close();                                
+                    File.Delete(zpPath + ".bmp");                      
+                    MemoryStream ms = new MemoryStream(zp);            
+                    ms.Write(zp, 0, zp.Length);                        
+                    img = Image.FromStream(ms);                        
+                    }                         
+                    }                     
+                    SetCardInfo(                               
+                    Name,                                
+                    Convert.ToInt32(Sex) == 1 ? "男" : "女",                               
+                    IDNum,                               
+                    img                          
+                    );                       
+                    }                       
+                    else                      
+                    {                         
+                    SetInfo("未读到卡");                    
+                    ReadFalseCount++;                      
+                    if (ReadFalseCount >= 10)                  
+                    {                               
+                    ReadFalseCount = 0;             
+                    API.SDT_ResetSAM(iPort, 0);                   
+                    API.SDT_ClosePort(iPort);                       
+                    Project.IsOpenedPort = false;                   
+                    IsReading = false;                              
+                    Thread.Sleep(500);                         
+                    }                     
+                    }                       
+                    IsReading = false;              
+                    }                 
+                    else                
+                    {                   
+                    SetInfo("未打开端口");        
+                    //IsScanning = false;        
+                    Thread.Sleep(500);            
+                    continue;                  
+                    }              
+                    }              
+                    IsScanning = false;       
+                    // Thread.Sleep(500);          
+                    }
+                    )
+                    );         
+                    ThreadReadCard.IsBackground = true;       
+                    ThreadReadCard.Name = "循环读卡进程";           
+                    ThreadReadCard.Start();        }        
+                    void SetInfo(    string sInfo       )       
+                    {           
+                    richTextBox1.Invoke(new EventHandler(delegate          
+                    {              
+                    richTextBox1.AppendText(sInfo);            
+                    }
+                    )
+                    );    
+                    }        
+                    void SetCardInfo
+                    (           
+                    string Name,          
+                    string Sex,           
+                    string IDCardNumber,     
+                    Image zp
+                    )       
+                    {           
+                    lblName.Invoke(new EventHandler(delegate           
+                    {                
+                    lblName.Text = Name;            
+                    }));          
+                    lblIDCardNum.Invoke(new EventHandler(delegate          
+                    {              
+                    lblIDCardNum.Text = IDCardNumber;            
+                    }
+                    )
+                    );          
+                    picPhoto.Invoke(new EventHandler(delegate          
+                    {          
+                    picPhoto.Image = zp;          
+                    }));       
+                    }        
+                    void InitThread()       
+                    {           
+                    CheckPort();       
+                    }         
+                    bool IsReading = false;      
+                    bool IsScanning = false;      
+                    void CheckPort()      
+                    {           
+                    Thread CheckPortThread = new Thread(new ThreadStart(delegate           
+                    {               
+                    while (true)        
+                    {                   
+                    if (IsReading)           
+                    {                        
+                    Thread.Sleep(500);         
+                    continue;                  
+                    }                 
+                    int OpenResult = 0x01;          
+                    int i = 0;                  
+                    if (!Project.IsOpenedPort)             
+                    {                      
+                    for (i = 1001; i <= 1016; i++)                   
+                    {                         
+                    try                          
+                    {                            
+                    API.SDT_ClosePort(i);           
+                    }                          
+                    catch { }                       
+                    try { OpenResult = API.SDT_OpenPort(i); }                         
+                    catch { }                          
+                    if (OpenResult == 0x90)                      
+                    {                                
+                    if (i != Project.DevicePort)                   
+                    {                                   
+                    Project.DevicePort = i;                     
+                    }                               
+                    break;                          
+                    }                      
+                    }                  
+                    }                    
+                    else                 
+                    {                      
+                    OpenResult = API.SDT_OpenPort(Project.DevicePort);       
+                    }                  
+                    Console.WriteLine(Project.DevicePort);            
+                    string tmpText = string.Empty;                    
+                    if (OpenResult == 0x90)                 
+                    {                     
+                    Project.IsOpenedPort = true;            
+                    tmpText = "USB端口 " + Project.DevicePort.ToString();           
+                    }                  
+                    else               
+                    {                  
+                    Project.IsOpenedPort = false;                      
+                    tmpText = "端口打开失败...";                  
+                    }                  
+                    lblPortState.Invoke(new EventHandler(delegate                   
+                    {                       
+                    lblPortState.Text = tmpText;                  
+                    }));                   
+                    if (Project.IsOpenedPort)                  
+                    {                      
+                    Thread.Sleep(300);                 
+                    }                  
+                    else                
+                    {                       
+                    Thread.Sleep(500);              
+                    }                   
+                    Console.WriteLine("Port Scanning");              
+                    }           
+                    }));           
+                    CheckPortThread.IsBackground = true;         
+                    CheckPortThread.Name = "端口循环检测线程";           
+                    CheckPortThread.Start();        }        
+                    /// <summary>       
+                    /// 初始化控件       
+                    /// </summary>      
+                    void InitControl()  
+                    {           
+                    #region 初始化变量          
+                    //Setting.Read();          
+                    #endregion       
+                    }         
+                    private void button1_Click(object sender, EventArgs e)       
+                    {           
+                    picPhoto.Image = null;           
+                    lblIDCardNum.Text = "";            
+                    lblName.Text = "";            
+                    lblSex.Text = "";       
+                    }    
+                    }
+                    }
